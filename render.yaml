@@ -36,7 +36,7 @@ services:
         fromService:
           type: web
           name: cybersecurity-backend
-          property: url
+          property: host
 
 databases:
   # --------------------------------------------------------------------------------
