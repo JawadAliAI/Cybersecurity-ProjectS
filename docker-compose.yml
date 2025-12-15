@@ -1,0 +1,271 @@
+# I have removed the obsolete 'version' tag to clean up the warnings.
+services:
+  # Frontend - Next.js
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        - NEXT_PUBLIC_API_URL=http://backend:5000
+    ports:
+      - "3000:3000"
+      - "7860:3000"  # Hugging Face compatible port
+    environment:
+      - NEXT_PUBLIC_API_URL=http://backend:5000
+    depends_on:
+      - backend
+    # The 'volumes' section has been removed to prevent hiding the built code.
+  # Backend - Python Flask
+  backend:
+    build: ./backend
+    ports:
+      - "5000:5000"
+      - "7861:5000"  # Hugging Face compatible port
+    environment:
+      - FLASK_ENV=development
+      - DATABASE_URL=postgresql://postgres:12345678@db:5432/cybersecurity
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - ./backend:/app
+      - ./data:/app/data
+  # Behavioral Analysis Engine
+  behavioral_analysis:
+    build: ./backend/behavioral_analysis
+    ports:
+      - "5001:5001"
+    environment:
+      - MODEL_PATH=/app/models
+      - TRAINING_DATA_PATH=/app/data/training
+      - REDIS_URL=redis://redis:6379
+    volumes:
+      - ./backend/behavioral_analysis:/app
+      - ./data/models:/app/models
+      - ./data/training:/app/data/training
+    depends_on:
+      - backend
+      - redis
+
+  # Decoy Generator
+  decoy_generator:
+    build: ./backend/decoy_generator
+    ports:
+      - "5002:5002"
+    environment:
+      - DECOY_CONFIG_PATH=/app/config
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - REDIS_URL=redis://redis:6379
+    volumes:
+      - ./backend/decoy_generator:/app
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data/decoys:/app/decoys
+    depends_on:
+      - backend
+      - redis
+
+  # Traffic Monitor
+  traffic_monitor:
+    build: ./backend/traffic_monitor
+    ports:
+      - "5003:5003"
+    environment:
+      - ZEEK_LOG_PATH=/app/logs
+      - TCPDUMP_INTERFACE=eth0
+      - REDIS_URL=redis://redis:6379
+    volumes:
+      - ./backend/traffic_monitor:/app
+      - ./data/logs:/app/logs
+    depends_on:
+      - backend
+      - redis
+
+  # Threat Attribution
+  threat_attribution:
+    build: ./backend/threat_attribution
+    ports:
+      - "5004:5004"
+    environment:
+      - MITRE_ATTACK_URL=https://attack.mitre.org/api/
+      - REDIS_URL=redis://redis:6379
+    volumes:
+      - ./backend/threat_attribution:/app
+    depends_on:
+      - backend
+      - redis
+
+  # Visualization Dashboard
+  visualization_dashboard:
+    build: ./backend/visualization_dashboard
+    ports:
+      - "5005:5005"
+    environment:
+      - FLASK_ENV=development
+      - REDIS_URL=redis://redis:6379
+    volumes:
+      - ./backend/visualization_dashboard:/app
+    depends_on:
+      - backend
+      - redis
+
+  # Threat Intelligence Sharing
+  threat_intelligence:
+    build: ./backend/threat_intelligence
+    environment:
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - redis
+    volumes:
+      - ./backend/threat_intelligence:/app
+      - ./data:/app/data
+    ports:
+      - "5006:5006"
+
+  # Evaluation Engine
+  evaluation_engine:
+    build: ./evaluation
+    environment:
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - redis
+      - backend
+    volumes:
+      - ./evaluation:/app
+      - ./data:/app/data
+    ports:
+      # Map host port 5008 (used by demo_module_tests.py and docs)
+      # to container port 5007 where the Flask app actually listens.
+      - "5008:5007"
+    privileged: true # Required for red-team tools
+
+  # Adaptive Deception Engine
+  adaptive_deception:
+    build: ./backend/adaptive_deception
+    ports:
+      - "5007:5007"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - MODEL_PATH=/app/models/adaptive
+    volumes:
+      - ./backend/adaptive_deception:/app
+      - ./data/models:/app/models
+    depends_on:
+      - redis
+      - behavioral_analysis
+      - decoy_generator
+
+  # Database
+  db:
+    image: postgres:13
+    environment:
+      - POSTGRES_DB=cybersecurity
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=12345678
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  # Redis Cache
+  redis:
+    image: redis:6-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  # Legacy Evaluation Tools (deprecated - use evaluation_engine instead)
+  evaluation:
+    build: ./evaluation
+    environment:
+      - TARGET_URL=http://backend:5000
+    volumes:
+      - ./evaluation:/app
+    depends_on:
+      - backend
+
+  # Elasticsearch
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - xpack.security.enabled=false
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+      - ./elk/elasticsearch/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro
+    networks:
+      - default
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Logstash
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.11.0
+    container_name: logstash
+    volumes:
+      - ./elk/logstash/pipeline:/usr/share/logstash/pipeline:ro
+      - ./elk/logstash/config:/usr/share/logstash/config:ro
+    ports:
+      - "5044:5044"
+      - "9600:9600"
+    environment:
+      - "LS_JAVA_OPTS=-Xmx256m -Xms256m"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - default
+
+  # Kibana
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: kibana
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - xpack.security.enabled=false
+    volumes:
+      - ./elk/kibana/kibana.yml:/usr/share/kibana/config/kibana.yml:ro
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - default
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5601/api/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Filebeat
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.11.0
+    container_name: filebeat
+    user: root
+    volumes:
+      - ./elk/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./data/logs:/var/log/cybersecurity:ro
+      - ./backend/logs:/app/logs:ro
+    depends_on:
+      - logstash
+    networks:
+      - default
+    command: filebeat -e -strict.perms=false
+
+volumes:
+  postgres_data:
+  redis_data:
+  elasticsearch_data:
+  kibana_data:
+  logstash_data:

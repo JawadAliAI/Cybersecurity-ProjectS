@@ -1,0 +1,53 @@
+services:
+  # --------------------------------------------------------------------------------
+  # BACKEND SERVICE (Flask)
+  # --------------------------------------------------------------------------------
+  - type: web
+    name: cybersecurity-backend
+    runtime: python
+    buildCommand: cd backend && pip install -r requirements.txt
+    startCommand: cd backend && gunicorn app:app --worker-class eventlet -w 1 --bind 0.0.0.0:$PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: FLASK_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: cybersecurity-db
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: JWT_SECRET_KEY
+        generateValue: true
+
+  # --------------------------------------------------------------------------------
+  # FRONTEND SERVICE (Next.js)
+  # --------------------------------------------------------------------------------
+  - type: web
+    name: cybersecurity-frontend
+    runtime: node
+    buildCommand: cd frontend && npm install && npm run build
+    startCommand: cd frontend && npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 18.17.0
+      - key: NEXT_PUBLIC_API_URL
+        fromService:
+          type: web
+          name: cybersecurity-backend
+          property: url
+
+databases:
+  # --------------------------------------------------------------------------------
+  # DATABASE (PostgreSQL)
+  # --------------------------------------------------------------------------------
+  - name: cybersecurity-db
+    databaseName: cybersecurity
+    user: cybersecurity_user
+    plan: free
+
+# --------------------------------------------------------------------------------
+# ENVIRONMENT VARIABLE GROUPS (Optional)
+# If you have shared secrets, define them here or in the Render Dashboard
+# --------------------------------------------------------------------------------
